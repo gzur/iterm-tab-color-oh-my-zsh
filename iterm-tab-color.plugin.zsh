@@ -1,30 +1,76 @@
+# Debug function (disabled by default, enable with TC_DEBUG=1)
+tc_debug() {
+    [[ -n "$TC_DEBUG" ]] && echo "[TC] $*" >&2
+    return 0
+}
+
+tc_debug "Plugin starting..."
+
 tcConfigFilePath="$(dirname "$0")/.tc-config"
-declare -A tcConfigColors
-declare -a orderedConfig
-while IFS="=" read -r configKey hexValue || [ -n "$hexValue" ]; do
-  if ! ( [[ $configKey == \#* ]]); then
-    orderedConfig+=( $configKey )
-    tcConfigColors[$configKey]+=$hexValue
-  fi
-done < $tcConfigFilePath
+tcDebugFile="$(dirname "$0")/tc-debug.log"
+
+tc_debug "Config path: $tcConfigFilePath"
+
+# Initialize arrays
+declare -gA tcConfigColors
+declare -ga orderedConfig
+
+tc_debug "Loading config..."
+
+# Read config file line by line without pipe
+while read -r line; do
+    # Skip comments and empty lines
+    if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]]; then
+        continue
+    fi
+    
+    # Parse key=value pairs
+    if [[ "$line" == *"="* ]]; then
+        configKey="${line%%=*}"
+        hexValue="${line#*=}"
+        
+        if [[ -n "$configKey" ]] && [[ -n "$hexValue" ]]; then
+            tc_debug "Adding: '$configKey' -> '$hexValue'"
+            orderedConfig+=( "$configKey" )
+            tcConfigColors[$configKey]="$hexValue"
+        fi
+    fi
+done < "$tcConfigFilePath"
+
+tc_debug "Config loaded. Found ${#orderedConfig[@]} entries."
 
 function directory_tab_color() {
+  tc_debug "Directory change: $PWD"
   try_set_tab_color "$PWD"
 }
 
 function command_tab_color() {
-  try_set_tab_color "$1"
+  tc_debug "Command: $1"
+  try_set_tab_color "$1" "command"
 }
 
 function try_set_tab_color() {
-  for k in $orderedConfig; do
-    if ( [[ "$1" =~ "$k" ]] ); then
+  local is_command=$2
+  tc_debug "Array size: ${#orderedConfig[@]}, checking '$1' against patterns"
+  
+  for k in "${orderedConfig[@]}"; do
+    # Skip empty patterns
+    if [[ -z "$k" ]]; then
+      continue
+    fi
+    
+    if [[ "$1" =~ $k ]]; then
+      tc_debug "MATCH: '$k' -> color ${tcConfigColors[$k]}"
       iterm_tab_color "$tcConfigColors[$k]"
       return 0
     fi
-
-    iterm_tab_color
   done
+  
+  # Only reset color for directory changes, not commands
+  if [[ -z "$is_command" ]]; then
+    tc_debug "No match found, resetting color"
+    iterm_tab_color
+  fi
 }
 
 function iterm_tab_color() {
